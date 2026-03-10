@@ -22,12 +22,12 @@
 
 | Feature | Description |
 |---------|-------------|
-| 🔄 **Distributed Inference** | Load balancing across multiple cloud inference nodes |
-| 🛡️ **Automatic Failover** | Intelligent retry with exponential backoff on errors |
-| 🏠 **Local Fallback** | Seamless switch to local Ollama when cloud is exhausted |
-| 📚 **Research Mode** | Academic-focused prompting for educational use |
-| ⚡ **Streaming Responses** | Real-time chat experience with SSE |
-| 🔐 **Family Access Control** | Simple token-based authentication |
+| **Distributed Inference** | Load balancing across multiple cloud inference nodes |
+| **Automatic Failover** | Intelligent retry with exponential backoff on errors |
+| **Local Fallback** | Seamless switch to local Ollama when cloud is exhausted |
+| **Research Mode** | Academic-focused prompting for educational use |
+| **Streaming Responses** | Real-time chat experience with SSE |
+| **Access Control** | Token-based authentication |
 
 ---
 
@@ -356,9 +356,3 @@ pytest tests/ -v
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
-
----
-
-<div align="center">
-<sub>Built with ❤️ for families who deserve reliable AI assistance</sub>
-</div>

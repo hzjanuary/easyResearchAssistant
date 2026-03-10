@@ -1,19 +1,4 @@
-"""
-API Gateway - High-Availability AI Inference Gateway
-=====================================================
-Production-ready FastAPI backend providing unified access to distributed
-AI inference nodes with automatic failover and local fallback capabilities.
-
-Features:
-- Async/await for concurrent request handling
-- Automatic retry on 429/5xx errors with intelligent node rotation
-- Local Ollama fallback for high availability
-- Streaming response support for real-time chat
-- Bearer token authentication for family access control
-
-Architecture follows Dependency Inversion Principle - depends on
-abstractions (ProviderManagerInterface) rather than concrete implementations.
-"""
+"""API Gateway - High-Availability AI Inference Gateway."""
 import os
 import json
 import logging
@@ -48,12 +33,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("api_gateway")
 
-# =============================================================================
-# Configuration
-# =============================================================================
 
 class GatewayConfig:
-    """Centralized gateway configuration"""
+    """Gateway configuration."""
     
     # Security
     ACCESS_TOKEN: str = os.getenv("ACCESS_TOKEN", secrets.token_urlsafe(32))
@@ -62,29 +44,16 @@ class GatewayConfig:
     DEFAULT_MODEL: str = os.getenv("CLOUDFLARE_MODEL", "@cf/meta/llama-3-8b-instruct")
     MAX_RETRIES: int = int(os.getenv("MAX_RETRIES", "3"))
     REQUEST_TIMEOUT: int = int(os.getenv("REQUEST_TIMEOUT", "60"))
-    
-    # Local fallback (Ollama)
+    # Local fallback
     OLLAMA_ENDPOINT: str = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
     OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3")
-    OLLAMA_MAX_TOKENS: int = int(os.getenv("OLLAMA_MAX_TOKENS", "1024"))  # Lightweight for RTX 3050
+    OLLAMA_MAX_TOKENS: int = int(os.getenv("OLLAMA_MAX_TOKENS", "1024"))
     
-    # Research mode system prompt
-    RESEARCH_SYSTEM_PROMPT: str = """You are an academic research assistant specialized in educational explanations. 
-Your responses should:
-1. Provide clear, structured explanations suitable for learning
-2. Cite relevant concepts and theories where applicable
-3. Use examples to illustrate complex ideas
-4. Summarize key points at the end
-5. Suggest related topics for further exploration
-
-Focus on accuracy, clarity, and educational value."""
+    RESEARCH_SYSTEM_PROMPT: str = """You are an academic research assistant.
+Provide clear, structured explanations with examples. Summarize key points and suggest related topics."""
 
 
 config = GatewayConfig()
-
-# =============================================================================
-# Security
-# =============================================================================
 
 security = HTTPBearer(auto_error=False)
 
@@ -93,10 +62,6 @@ async def verify_access_token(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(security),
     x_access_token: Optional[str] = Header(None, alias="X-Access-Token")
 ) -> bool:
-    """
-    Verify access token from Bearer auth or custom header.
-    Supports both standard Bearer token and legacy header for compatibility.
-    """
     token = None
     
     if credentials:
@@ -120,22 +85,16 @@ async def verify_access_token(
     return True
 
 
-# =============================================================================
-# Request/Response Models
-# =============================================================================
-
 class InferenceRequest(BaseModel):
-    """Request model for inference endpoint"""
-    prompt: str = Field(..., min_length=1, max_length=32000, description="The prompt to send to the AI")
-    system_prompt: Optional[str] = Field(None, max_length=4000, description="Optional system prompt")
-    max_tokens: int = Field(2048, ge=1, le=8192, description="Maximum tokens in response")
-    temperature: float = Field(0.7, ge=0.0, le=2.0, description="Sampling temperature")
-    stream: bool = Field(True, description="Enable streaming response")
-    research_mode: bool = Field(False, description="Enable research/academic mode")
+    prompt: str = Field(..., min_length=1, max_length=32000)
+    system_prompt: Optional[str] = Field(None, max_length=4000)
+    max_tokens: int = Field(2048, ge=1, le=8192)
+    temperature: float = Field(0.7, ge=0.0, le=2.0)
+    stream: bool = Field(True)
+    research_mode: bool = Field(False)
 
 
 class GatewayStatus(BaseModel):
-    """Gateway status response"""
     status: str
     version: str
     provider_status: dict
@@ -143,21 +102,13 @@ class GatewayStatus(BaseModel):
 
 
 class InferenceResponse(BaseModel):
-    """Non-streaming inference response"""
     response: str
     provider: str
     tokens_used: Optional[int] = None
 
 
-# =============================================================================
-# Inference Client
-# =============================================================================
-
 class InferenceClient:
-    """
-    Unified client for calling inference endpoints.
-    Supports both Cloudflare Workers AI and local Ollama.
-    """
+    """Unified client for Cloudflare and Ollama endpoints."""
     
     def __init__(self, timeout: int = 60):
         self.timeout = timeout
@@ -307,21 +258,14 @@ class InferenceClient:
                 yield chunk
 
 
-# =============================================================================
-# Application Setup
-# =============================================================================
-
-# Global instances
 provider_manager: Optional[ProviderManager] = None
 inference_client: Optional[InferenceClient] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifecycle management"""
     global provider_manager, inference_client
     
-    # Startup
     logger.info("Initializing AI Inference Gateway...")
     provider_manager = create_provider_manager_from_env()
     inference_client = InferenceClient(timeout=config.REQUEST_TIMEOUT)
@@ -353,10 +297,6 @@ app.add_middleware(
 )
 
 
-# =============================================================================
-# Inference Logic with Retry and Fallback
-# =============================================================================
-
 async def execute_inference_with_fallback(
     prompt: str,
     system_prompt: Optional[str],
@@ -364,15 +304,6 @@ async def execute_inference_with_fallback(
     temperature: float,
     stream: bool
 ) -> AsyncGenerator[str, None]:
-    """
-    Execute inference with automatic retry and local fallback.
-    
-    Flow:
-    1. Try cloud providers with round-robin selection
-    2. On 429/5xx, mark node failed and retry with next node
-    3. After exhausting retries, fall back to local Ollama
-    4. Yield error if all options exhausted
-    """
     tried_nodes = set()
     
     # Phase 1: Try cloud providers
@@ -481,13 +412,8 @@ async def stream_response(
             yield f"data: {chunk}\n\n"
 
 
-# =============================================================================
-# API Endpoints
-# =============================================================================
-
 @app.get("/")
 async def root():
-    """Health check endpoint (public)"""
     return {
         "service": "easyResearchAssistant",
         "version": "2.0.0",
@@ -617,10 +543,6 @@ async def reset_providers(_: bool = Depends(verify_access_token)):
     provider_manager.reset_all_nodes()
     return {"message": "All providers reset", "available": len(provider_manager.available_nodes)}
 
-
-# =============================================================================
-# Entry Point
-# =============================================================================
 
 if __name__ == "__main__":
     import uvicorn

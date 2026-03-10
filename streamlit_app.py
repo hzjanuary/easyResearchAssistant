@@ -1,15 +1,4 @@
-"""
-easyResearchAssistant - Streamlit Chat Interface
-=================================================
-A modern chat UI with streaming responses and Research Mode support.
-
-Features:
-- Real-time streaming responses
-- Research Mode toggle for academic/educational focus
-- Chat history management
-- Provider status monitoring
-- Mobile-responsive design
-"""
+"""Streamlit Chat Interface for easyResearchAssistant."""
 import os
 import json
 import requests
@@ -24,61 +13,31 @@ from typing import Generator
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 DEFAULT_ACCESS_TOKEN = os.getenv("ACCESS_TOKEN", "")
 
-# Page configuration
 st.set_page_config(
     page_title="easyResearchAssistant",
-    page_icon="🔬",
+    page_icon="◈",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better UX
 st.markdown("""
 <style>
-    /* Main container styling */
-    .main .block-container {
-        padding-top: 2rem;
-        padding-bottom: 2rem;
-    }
-    
-    /* Chat message styling */
-    .stChatMessage {
-        background-color: transparent;
-    }
-    
-    /* Research mode indicator */
+    .main .block-container { padding-top: 2rem; padding-bottom: 2rem; }
+    .stChatMessage { background-color: transparent; }
     .research-badge {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 4px 12px;
-        border-radius: 16px;
-        font-size: 0.8rem;
-        font-weight: 600;
+        color: white; padding: 4px 12px; border-radius: 16px;
+        font-size: 0.8rem; font-weight: 600;
     }
-    
-    /* Status indicator */
-    .status-online {
-        color: #10b981;
-        font-weight: 600;
-    }
-    .status-offline {
-        color: #ef4444;
-        font-weight: 600;
-    }
-    
-    /* Hide Streamlit branding */
+    .status-online { color: #10b981; font-weight: 600; }
+    .status-offline { color: #ef4444; font-weight: 600; }
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
 
-# =============================================================================
-# Session State Initialization
-# =============================================================================
-
 def init_session_state():
-    """Initialize session state variables"""
     if "messages" not in st.session_state:
         st.session_state.messages = []
     
@@ -98,12 +57,7 @@ def init_session_state():
         st.session_state.max_tokens = 2048
 
 
-# =============================================================================
-# API Functions
-# =============================================================================
-
 def check_api_health() -> dict:
-    """Check API gateway health status"""
     try:
         response = requests.get(f"{API_BASE_URL}/health", timeout=5)
         if response.status_code == 200:
@@ -116,7 +70,6 @@ def check_api_health() -> dict:
 
 
 def get_gateway_status(token: str) -> dict:
-    """Get detailed gateway status"""
     try:
         headers = {"Authorization": f"Bearer {token}"}
         response = requests.get(f"{API_BASE_URL}/v1/status", headers=headers, timeout=5)
@@ -134,10 +87,6 @@ def stream_chat_response(
     temperature: float = 0.7,
     max_tokens: int = 2048
 ) -> Generator[str, None, None]:
-    """
-    Stream chat response from the API gateway.
-    Yields text chunks as they arrive.
-    """
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
@@ -190,41 +139,33 @@ def stream_chat_response(
                                 yield parsed["response"]
                             
                         except json.JSONDecodeError:
-                            # Raw text response
                             yield data
                             
     except requests.exceptions.Timeout:
         yield "Error: Request timed out. Please try again."
     except requests.exceptions.ConnectionError:
-        yield "Error: Cannot connect to the API gateway. Is it running?"
+        yield "Error: Cannot connect to the API gateway."
     except Exception as e:
         yield f"Error: {str(e)}"
 
 
-# =============================================================================
-# UI Components
-# =============================================================================
-
 def render_sidebar():
-    """Render the sidebar with settings and status"""
     with st.sidebar:
-        st.title("⚙️ Settings")
+        st.title("Settings")
         
-        # Access Token
-        st.subheader("🔐 Authentication")
+        st.subheader("Authentication")
         token = st.text_input(
             "Access Token",
             value=st.session_state.access_token,
             type="password",
-            help="Your family access token for the API"
+            help="Your access token for the API"
         )
         if token != st.session_state.access_token:
             st.session_state.access_token = token
         
         st.divider()
         
-        # Research Mode Toggle
-        st.subheader("📚 Research Mode")
+        st.subheader("Research Mode")
         research_mode = st.toggle(
             "Enable Research Mode",
             value=st.session_state.research_mode,
@@ -240,8 +181,7 @@ def render_sidebar():
         
         st.divider()
         
-        # Generation Parameters
-        st.subheader("🎛️ Parameters")
+        st.subheader("Parameters")
         
         st.session_state.temperature = st.slider(
             "Temperature",
@@ -263,8 +203,7 @@ def render_sidebar():
         
         st.divider()
         
-        # Gateway Status
-        st.subheader("📊 Gateway Status")
+        st.subheader("Gateway Status")
         
         health = check_api_health()
         if health.get("status") == "healthy":
@@ -294,68 +233,58 @@ def render_sidebar():
         
         st.divider()
         
-        # Actions
-        st.subheader("🔧 Actions")
+        st.subheader("Actions")
         
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("🗑️ Clear Chat", use_container_width=True):
+            if st.button("Clear Chat", use_container_width=True):
                 st.session_state.messages = []
                 st.rerun()
         
         with col2:
-            if st.button("🔄 Refresh", use_container_width=True):
+            if st.button("Refresh", use_container_width=True):
                 st.rerun()
 
 
 def render_chat():
-    """Render the main chat interface"""
-    # Header
     col1, col2 = st.columns([3, 1])
     with col1:
-        st.title("🔬 easyResearchAssistant")
+        st.title("easyResearchAssistant")
         st.caption("High-Availability AI Inference Gateway")
     
     with col2:
         if st.session_state.research_mode:
             st.markdown(
-                '<span class="research-badge">📚 Research Mode</span>',
+                '<span class="research-badge">Research Mode</span>',
                 unsafe_allow_html=True
             )
     
-    # Connection warning
     if not st.session_state.api_connected:
         st.warning(
-            "⚠️ Not connected to the API gateway. "
+            "Not connected to the API gateway. "
             "Make sure the server is running: `python api_gateway.py`"
         )
     
     if not st.session_state.access_token:
-        st.info(
-            "🔐 Enter your access token in the sidebar to start chatting."
-        )
+        st.info("Enter your access token in the sidebar to start chatting.")
     
     # Chat history
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
     
-    # Chat input
     if prompt := st.chat_input(
-        "Ask me anything...",
+        "Enter your message...",
         disabled=not (st.session_state.api_connected and st.session_state.access_token)
     ):
-        # Add user message
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
         
-        # Generate response
         with st.chat_message("assistant"):
             response_placeholder = st.empty()
             full_response = ""
             
-            # Stream the response
             for chunk in stream_chat_response(
                 prompt=prompt,
                 token=st.session_state.access_token,
@@ -368,16 +297,10 @@ def render_chat():
             
             response_placeholder.markdown(full_response)
         
-        # Add assistant message to history
         st.session_state.messages.append({"role": "assistant", "content": full_response})
 
 
-# =============================================================================
-# Main Application
-# =============================================================================
-
 def main():
-    """Main application entry point"""
     init_session_state()
     render_sidebar()
     render_chat()

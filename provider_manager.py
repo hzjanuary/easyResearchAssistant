@@ -1,17 +1,4 @@
-"""
-Provider Manager - Distributed Inference Node Orchestration
-============================================================
-Manages multiple inference providers (Cloudflare Workers AI nodes) with
-intelligent load balancing, health monitoring, and automatic failover.
-
-Architecture:
-- InferenceNode: Abstract representation of a compute endpoint
-- ProviderManager: Orchestrates node selection and health tracking
-- Supports Round Robin and Random selection strategies
-
-This module follows the Single Responsibility Principle (SRP) by focusing
-solely on provider orchestration and selection logic.
-"""
+"""Provider Manager - Distributed Inference Node Orchestration."""
 import json
 import random
 import asyncio
@@ -49,12 +36,7 @@ class SelectionStrategy(Enum):
 
 @dataclass
 class InferenceNode:
-    """
-    Represents a distributed inference endpoint.
-    
-    This abstraction allows treating different provider types uniformly,
-    enabling seamless failover between cloud and local inference.
-    """
+    """Represents a distributed inference endpoint."""
     node_id: str
     node_type: NodeType
     name: str
@@ -134,7 +116,7 @@ class InferenceNode:
 
 
 class ProviderManagerInterface(ABC):
-    """Abstract interface for provider management (Interface Segregation)"""
+    """Abstract interface for provider management."""
     
     @abstractmethod
     def get_next_node(self) -> Optional[InferenceNode]:
@@ -153,18 +135,7 @@ class ProviderManagerInterface(ABC):
 
 
 class ProviderManager(ProviderManagerInterface):
-    """
-    Orchestrates distributed inference nodes with intelligent selection.
-    
-    Features:
-    - Multiple selection strategies (Round Robin, Random, Least Used)
-    - Automatic health tracking and recovery
-    - Local fallback support for high availability
-    - Thread-safe operations
-    
-    This class follows Open/Closed Principle - extend via new strategies
-    without modifying existing code.
-    """
+    """Orchestrates distributed inference nodes with intelligent selection."""
     
     def __init__(
         self,

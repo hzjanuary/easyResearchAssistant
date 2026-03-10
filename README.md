@@ -1,134 +1,364 @@
 # easyResearchAssistant
 
-A FastAPI backend that acts as a **Load Balancer** for multiple Cloudflare AI Workers accounts. Distributes requests across accounts using Round Robin or Random selection, with automatic failover on rate limiting.
+<div align="center">
 
-## Features
+**High-Availability AI Inference Gateway**
 
-- **Multi-Account Load Balancing**: Distribute AI requests across 5+ Cloudflare accounts
-- **Smart Rotation**: Round Robin or Random token selection strategies
-- **Rate Limit Handling**: Automatic retry with different accounts on 429 errors
-- **Streaming Support**: Real-time streaming responses from Llama 3
-- **Family Security**: Simple password protection for API access
-- **Easy Configuration**: Environment variable based setup
+*A production-ready, fault-tolerant AI assistant with distributed inference and local fallback capabilities*
 
-## Quick Start
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)](https://fastapi.tiangolo.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-### 1. Install Dependencies
+</div>
 
-```bash
-pip install -r requirements.txt
-```
+---
 
-### 2. Configure Environment
+## Overview
 
-```bash
-# Copy example config
-cp .env.example .env
+**easyResearchAssistant** is a lightweight, high-availability AI inference gateway designed for families who want reliable access to AI assistants without single points of failure. The system intelligently routes requests across multiple distributed inference providers and automatically falls back to local GPU inference when cloud services are unavailable.
 
-# Edit .env with your Cloudflare credentials
-```
+### Key Features
 
-### 3. Run the Server
+| Feature | Description |
+|---------|-------------|
+| 🔄 **Distributed Inference** | Load balancing across multiple cloud inference nodes |
+| 🛡️ **Automatic Failover** | Intelligent retry with exponential backoff on errors |
+| 🏠 **Local Fallback** | Seamless switch to local Ollama when cloud is exhausted |
+| 📚 **Research Mode** | Academic-focused prompting for educational use |
+| ⚡ **Streaming Responses** | Real-time chat experience with SSE |
+| 🔐 **Family Access Control** | Simple token-based authentication |
 
-```bash
-# Development
-python main.py
-
-# Production
-uvicorn main:app --host 0.0.0.0 --port 8000
-```
-
-## API Endpoints
-
-### `POST /ask`
-Main endpoint for AI queries.
-
-**Headers:**
-- `X-Access-Password`: Your family access password
-
-**Body:**
-```json
-{
-    "prompt": "Tell me about quantum computing",
-    "system_prompt": "You are a helpful assistant",
-    "max_tokens": 2048,
-    "temperature": 0.7,
-    "stream": true
-}
-```
-
-**Example with curl:**
-```bash
-# Streaming response
-curl -X POST "http://localhost:8000/ask" \
-  -H "X-Access-Password: your_password" \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "Hello, how are you?", "stream": true}'
-
-# Non-streaming response
-curl -X POST "http://localhost:8000/ask" \
-  -H "X-Access-Password: your_password" \
-  -H "Content-Type: application/json" \
-  -d '{"prompt": "Hello, how are you?", "stream": false}'
-```
-
-### `GET /status`
-Get load balancer status and active accounts.
-
-### `POST /strategy/{strategy}`
-Change rotation strategy (`round_robin` or `random`).
-
-### `POST /reset`
-Reset all failed accounts to active status.
-
-### `GET /health`
-Health check endpoint (no auth required).
-
-## Configuration
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `ACCESS_PASSWORD` | API access password | `family_secret_2024` |
-| `ROTATION_STRATEGY` | `round_robin` or `random` | `round_robin` |
-| `MAX_RETRIES` | Max retry attempts on 429 | `3` |
-| `REQUEST_TIMEOUT` | Request timeout (seconds) | `60` |
-| `CLOUDFLARE_MODEL` | AI model to use | `@cf/meta/llama-3-8b-instruct` |
-
-## Setting Up Cloudflare Accounts
-
-1. Go to [Cloudflare Dashboard](https://dash.cloudflare.com/)
-2. Find your **Account ID** in the right sidebar
-3. Go to **Profile → API Tokens** → Create Token
-4. Use the **Workers AI (Read)** template or create custom with AI permissions
-5. Add credentials to your `.env` file
+---
 
 ## Architecture
 
 ```
-┌─────────────┐     ┌──────────────┐     ┌─────────────────────┐
-│   Client    │────▶│   FastAPI    │────▶│  Load Balancer      │
-│             │◀────│   /ask       │◀────│  (Round Robin/      │
-└─────────────┘     └──────────────┘     │   Random)           │
-                                         └──────────┬──────────┘
-                                                    │
-                    ┌───────────────────────────────┼───────────────────────────────┐
-                    │                               │                               │
-                    ▼                               ▼                               ▼
-           ┌────────────────┐              ┌────────────────┐              ┌────────────────┐
-           │ Cloudflare     │              │ Cloudflare     │              │ Cloudflare     │
-           │ Account 1      │              │ Account 2      │              │ Account N      │
-           │ (Llama 3)      │              │ (Llama 3)      │              │ (Llama 3)      │
-           └────────────────┘              └────────────────┘              └────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Client Applications                          │
+│                  (Streamlit UI / API Consumers)                     │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                       API Gateway (FastAPI)                         │
+│  ┌─────────────┐  ┌─────────────────┐  ┌─────────────────────────┐  │
+│  │   Auth      │  │  Request Router │  │  Streaming Handler      │  │
+│  │   Layer     │  │  & Retry Logic  │  │  (SSE)                  │  │
+│  └─────────────┘  └─────────────────┘  └─────────────────────────┘  │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                      Provider Manager                               │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │  Selection Strategies: Round Robin │ Random │ Least Used     │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │  Health Monitoring │ Cooldown Management │ Auto-Recovery     │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │
+           ┌───────────────────┼───────────────────┐
+           │                   │                   │
+           ▼                   ▼                   ▼
+┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+│  Inference      │  │  Inference      │  │  Inference      │
+│  Node Alpha     │  │  Node Beta      │  │  Node Gamma     │
+│  (Cloudflare)   │  │  (Cloudflare)   │  │  (Cloudflare)   │
+└─────────────────┘  └─────────────────┘  └─────────────────┘
+           │
+           │ (All cloud nodes exhausted)
+           ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    Local Fallback (Ollama)                          │
+│                 RTX 3050 • Llama 3 • Low-VRAM Mode                  │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-## Rate Limit Handling
+### Design Principles
 
-When an account hits a 429 (Too Many Requests) error:
-1. The account is marked as temporarily failed
-2. The request is automatically retried with the next available account
-3. After `MAX_RETRIES` attempts, an error is returned
-4. Failed accounts can be reset via `/reset` endpoint
+- **Redundancy**: Multiple inference providers ensure no single point of failure
+- **Graceful Degradation**: Automatic fallback to local inference preserves availability
+- **User Privacy**: Local processing option keeps sensitive queries on-premises
+- **Resource Awareness**: Lightweight local inference respects GPU memory constraints
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+- Python 3.10+
+- [Ollama](https://ollama.ai/) (optional, for local fallback)
+- Cloudflare Workers AI API access
+
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/hzjanuary/easyResearchAssistant.git
+cd easyResearchAssistant
+
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+# or: .\venv\Scripts\activate  # Windows
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Configure environment
+cp .env.template .env
+# Edit .env with your credentials
+```
+
+### Configuration
+
+1. **Generate Access Token**:
+   ```bash
+   python -c "import secrets; print(secrets.token_urlsafe(32))"
+   ```
+
+2. **Configure `.env`**:
+   ```env
+   ACCESS_TOKEN=your_generated_token_here
+   
+   # Add your Cloudflare credentials
+   CLOUDFLARE_ACCOUNT_1_ID=your_account_id
+   CLOUDFLARE_ACCOUNT_1_TOKEN=your_api_token
+   CLOUDFLARE_ACCOUNT_1_NAME=Provider-Alpha
+   
+   # Enable local fallback (optional)
+   OLLAMA_ENABLED=true
+   OLLAMA_MODEL=llama3
+   ```
+
+3. **Start Local Fallback** (optional):
+   ```bash
+   ollama pull llama3
+   ollama serve
+   ```
+
+### Running the Gateway
+
+```bash
+# Start the API Gateway
+python api_gateway.py
+
+# In another terminal, start the UI
+streamlit run streamlit_app.py
+```
+
+Access the UI at `http://localhost:8501`
+
+---
+
+## API Reference
+
+### Authentication
+
+All endpoints (except `/health`) require Bearer token authentication:
+
+```bash
+curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:8000/v1/status
+```
+
+### Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/` | Service info (public) |
+| `GET` | `/health` | Health check with provider status (public) |
+| `POST` | `/v1/inference` | Main inference endpoint |
+| `GET` | `/v1/status` | Detailed gateway status |
+| `POST` | `/v1/providers/strategy/{strategy}` | Change selection strategy |
+| `POST` | `/v1/providers/reset` | Reset all providers |
+
+### Inference Request
+
+```bash
+curl -X POST http://localhost:8000/v1/inference \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Explain quantum entanglement",
+    "research_mode": true,
+    "stream": true,
+    "max_tokens": 2048,
+    "temperature": 0.7
+  }'
+```
+
+### Response Formats
+
+**Streaming (SSE)**:
+```
+data: {"response": "Quantum "}
+data: {"response": "entanglement "}
+data: {"response": "is..."}
+data: [DONE]
+```
+
+**Non-Streaming**:
+```json
+{
+  "response": "Quantum entanglement is...",
+  "provider": "Provider-Alpha"
+}
+```
+
+---
+
+## Research Mode
+
+Research Mode activates an academic-focused system prompt optimized for:
+
+- **Structured Explanations**: Clear, organized responses
+- **Educational Value**: Learning-oriented language
+- **Concept Citations**: References to relevant theories
+- **Illustrative Examples**: Practical demonstrations
+- **Further Exploration**: Suggestions for related topics
+
+Enable via API:
+```json
+{"prompt": "...", "research_mode": true}
+```
+
+Or toggle in the Streamlit UI sidebar.
+
+---
+
+## Provider Configuration
+
+### Environment Variables (Recommended)
+
+```env
+CLOUDFLARE_ACCOUNT_1_ID=abc123...
+CLOUDFLARE_ACCOUNT_1_TOKEN=xyz789...
+CLOUDFLARE_ACCOUNT_1_NAME=Provider-Alpha
+```
+
+### JSON Configuration (Alternative)
+
+Create `providers.json` from the template:
+```bash
+cp providers.example.json providers.json
+# Edit with your credentials
+```
+
+---
+
+## Local Fallback Setup
+
+For high availability, configure Ollama as a local fallback:
+
+### Installing Ollama
+
+```bash
+# Linux
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Pull Llama 3 (optimized for RTX 3050 4GB)
+ollama pull llama3
+```
+
+### Lightweight Configuration
+
+The gateway automatically configures Ollama for constrained environments:
+
+- **Token Limit**: 1024 (configurable via `OLLAMA_MAX_TOKENS`)
+- **Single Concurrent Request**: Prevents VRAM exhaustion
+- **CPU Thread Limit**: Preserves system responsiveness
+
+---
+
+## Hardware Recommendations
+
+| Component | Minimum | Recommended |
+|-----------|---------|-------------|
+| CPU | 4 cores | 6+ cores |
+| RAM | 8 GB | 16 GB |
+| GPU (for fallback) | 4GB VRAM | 8GB+ VRAM |
+| Network | Stable broadband | Low-latency connection |
+
+**Tested On**: Acer Aspire 7 with RTX 3050 (4GB VRAM), Pop!_OS
+
+---
+
+## Security Considerations
+
+1. **Never commit credentials**: `.env` and `providers.json` are gitignored
+2. **Rotate tokens regularly**: Generate new access tokens periodically
+3. **Use HTTPS in production**: Deploy behind a reverse proxy (nginx/Caddy)
+4. **Limit network exposure**: Bind to localhost unless needed externally
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+**"No available providers"**
+- Check your Cloudflare API tokens are valid
+- Verify account IDs are correct
+- Run `/v1/providers/reset` to clear cooldowns
+
+**"Local fallback failed"**
+- Ensure Ollama is running: `ollama serve`
+- Check the model is pulled: `ollama list`
+- Verify endpoint: `curl http://localhost:11434/api/tags`
+
+**"Connection refused"**
+- Start the API gateway: `python api_gateway.py`
+- Check the port isn't in use: `lsof -i :8000`
+
+### Logs
+
+Gateway logs include detailed request routing information:
+```
+2026-03-10 14:30:00 | INFO | api_gateway | Attempt 1: Using Provider-Alpha
+2026-03-10 14:30:01 | WARNING | api_gateway | Node Provider-Alpha error 429, trying next...
+2026-03-10 14:30:01 | INFO | api_gateway | Attempt 2: Using Provider-Beta
+```
+
+---
+
+## Development
+
+### Project Structure
+
+```
+easyResearchAssistant/
+├── api_gateway.py         # FastAPI backend
+├── provider_manager.py    # Distributed provider orchestration
+├── streamlit_app.py       # Chat UI
+├── requirements.txt       # Dependencies
+├── .env.template          # Configuration template
+├── providers.example.json # Provider config template
+└── README.md              # This file
+```
+
+### Running Tests
+
+```bash
+pytest tests/ -v
+```
+
+### Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Submit a pull request
+
+---
 
 ## License
 
-MIT
+MIT License - see [LICENSE](LICENSE) for details.
+
+---
+
+<div align="center">
+<sub>Built with ❤️ for families who deserve reliable AI assistance</sub>
+</div>

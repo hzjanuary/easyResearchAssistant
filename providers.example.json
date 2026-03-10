@@ -1,0 +1,65 @@
+{
+    "_comment": "Inference Provider Configuration - DO NOT COMMIT WITH REAL CREDENTIALS",
+    "_docs": "https://github.com/hzjanuary/easyResearchAssistant#configuration",
+    
+    "providers": [
+        {
+            "account_id": "your_cloudflare_account_id_1",
+            "api_token": "your_cloudflare_api_token_1",
+            "name": "Provider-Alpha",
+            "priority": 1,
+            "metadata": {
+                "region": "auto",
+                "notes": "Primary inference node"
+            }
+        },
+        {
+            "account_id": "your_cloudflare_account_id_2",
+            "api_token": "your_cloudflare_api_token_2",
+            "name": "Provider-Beta",
+            "priority": 2,
+            "metadata": {
+                "region": "auto",
+                "notes": "Secondary inference node"
+            }
+        },
+        {
+            "account_id": "your_cloudflare_account_id_3",
+            "api_token": "your_cloudflare_api_token_3",
+            "name": "Provider-Gamma",
+            "priority": 3,
+            "metadata": {
+                "region": "auto",
+                "notes": "Tertiary inference node"
+            }
+        },
+        {
+            "account_id": "your_cloudflare_account_id_4",
+            "api_token": "your_cloudflare_api_token_4",
+            "name": "Provider-Delta",
+            "priority": 4,
+            "metadata": {
+                "region": "auto",
+                "notes": "Quaternary inference node"
+            }
+        },
+        {
+            "account_id": "your_cloudflare_account_id_5",
+            "api_token": "your_cloudflare_api_token_5",
+            "name": "Provider-Epsilon",
+            "priority": 5,
+            "metadata": {
+                "region": "auto",
+                "notes": "Quinary inference node"
+            }
+        }
+    ],
+    
+    "local_fallback": {
+        "name": "Local Ollama (RTX 3050)",
+        "endpoint": "http://localhost:11434",
+        "model": "llama3",
+        "max_concurrent": 1,
+        "notes": "Local GPU fallback for high availability"
+    }
+}

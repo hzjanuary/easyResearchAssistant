@@ -3,14 +3,44 @@ import json
 import random
 import asyncio
 import logging
+import os
 from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from collections import deque
 
 logger = logging.getLogger(__name__)
+
+# In-memory log buffer for monitoring dashboard
+LOG_BUFFER_SIZE = 50
+log_buffer: Deque[Dict[str, Any]] = deque(maxlen=LOG_BUFFER_SIZE)
+
+
+def _add_log(level: str, message: str, node_name: Optional[str] = None):
+    """Add a log entry to the buffer and standard logger"""
+    entry = {
+        "timestamp": datetime.now().isoformat(),
+        "level": level,
+        "message": message,
+        "node": node_name
+    }
+    log_buffer.append(entry)
+    
+    log_func = getattr(logger, level.lower(), logger.info)
+    log_func(message)
+
+
+def get_recent_logs(count: int = 10) -> List[Dict[str, Any]]:
+    """Get the most recent log entries"""
+    return list(log_buffer)[-count:]
+
+
+def clear_logs():
+    """Clear the log buffer"""
+    log_buffer.clear()
 
 
 class NodeType(Enum):
@@ -46,9 +76,14 @@ class InferenceNode:
     priority: int = 1  # Lower = higher priority
     request_count: int = 0
     error_count: int = 0
+    success_count: int = 0
+    rate_limit_count: int = 0
     last_used: Optional[datetime] = None
     last_error: Optional[datetime] = None
     cooldown_until: Optional[datetime] = None
+    cooldown_started: Optional[datetime] = None
+    average_response_time: float = 0.0
+    _response_times: List[float] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     
     @property
@@ -70,37 +105,77 @@ class InferenceNode:
         """Get API token (compatibility property)"""
         return self.credentials.get("api_token", "")
     
-    def record_success(self):
+    def record_success(self, response_time: float = 0.0):
         """Record a successful request"""
         self.request_count += 1
+        self.success_count += 1
         self.last_used = datetime.now()
         self.status = NodeStatus.HEALTHY
-        # Decay error count on success
         self.error_count = max(0, self.error_count - 1)
+        
+        if response_time > 0:
+            self._response_times.append(response_time)
+            if len(self._response_times) > 100:
+                self._response_times = self._response_times[-100:]
+            self.average_response_time = sum(self._response_times) / len(self._response_times)
+        
+        _add_log("INFO", f"Node {self.name} completed request successfully", self.name)
     
-    def record_error(self, is_rate_limit: bool = False):
+    def record_error(self, is_rate_limit: bool = False, cooldown_minutes: int = 30):
         """Record a failed request"""
         self.error_count += 1
+        self.request_count += 1
         self.last_error = datetime.now()
         
         if is_rate_limit:
+            self.rate_limit_count += 1
             self.status = NodeStatus.RATE_LIMITED
-            # Cooldown for rate-limited nodes (exponential backoff)
-            cooldown_seconds = min(300, 30 * (2 ** min(self.error_count - 1, 4)))
-            self.cooldown_until = datetime.now() + timedelta(seconds=cooldown_seconds)
-            logger.warning(f"Node {self.name} rate limited, cooldown: {cooldown_seconds}s")
+            self.cooldown_started = datetime.now()
+            self.cooldown_until = datetime.now() + timedelta(minutes=cooldown_minutes)
+            _add_log("WARNING", f"Node {self.name} rate limited (429), cooldown: {cooldown_minutes}min", self.name)
         elif self.error_count >= 3:
             self.status = NodeStatus.UNAVAILABLE
+            self.cooldown_started = datetime.now()
             self.cooldown_until = datetime.now() + timedelta(minutes=5)
-            logger.error(f"Node {self.name} marked unavailable after {self.error_count} errors")
+            _add_log("ERROR", f"Node {self.name} marked unavailable after {self.error_count} errors", self.name)
         else:
             self.status = NodeStatus.DEGRADED
+            _add_log("WARNING", f"Node {self.name} degraded, error count: {self.error_count}", self.name)
     
     def reset_status(self):
         """Reset node to healthy status"""
         self.status = NodeStatus.HEALTHY
         self.error_count = 0
         self.cooldown_until = None
+        self.cooldown_started = None
+        _add_log("INFO", f"Node {self.name} reset to healthy status", self.name)
+    
+    @property
+    def cooldown_remaining_seconds(self) -> int:
+        """Get remaining cooldown time in seconds"""
+        if not self.cooldown_until:
+            return 0
+        remaining = (self.cooldown_until - datetime.now()).total_seconds()
+        return max(0, int(remaining))
+    
+    @property
+    def display_status(self) -> str:
+        """Human-readable status for dashboard"""
+        if self.status == NodeStatus.HEALTHY:
+            return "Active"
+        elif self.status == NodeStatus.RATE_LIMITED:
+            return f"Cooldown ({self.cooldown_remaining_seconds}s)"
+        elif self.status == NodeStatus.UNAVAILABLE:
+            return "Offline"
+        else:
+            return "Degraded"
+    
+    @property
+    def success_rate(self) -> float:
+        """Calculate success rate percentage"""
+        if self.request_count == 0:
+            return 100.0
+        return (self.success_count / self.request_count) * 100
     
     def to_dict(self) -> Dict[str, Any]:
         """Serialize node for status reporting (excludes sensitive data)"""
@@ -109,10 +184,28 @@ class InferenceNode:
             "name": self.name,
             "type": self.node_type.value,
             "status": self.status.value,
+            "display_status": self.display_status,
             "priority": self.priority,
             "request_count": self.request_count,
+            "success_count": self.success_count,
+            "error_count": self.error_count,
+            "rate_limit_count": self.rate_limit_count,
+            "success_rate": round(self.success_rate, 1),
+            "average_response_time": round(self.average_response_time, 2),
+            "last_used": self.last_used.isoformat() if self.last_used else None,
+            "last_error": self.last_error.isoformat() if self.last_error else None,
+            "cooldown_remaining": self.cooldown_remaining_seconds,
             "is_available": self.is_available
         }
+    
+    def to_monitoring_dict(self) -> Dict[str, Any]:
+        """Extended serialization for monitoring dashboard"""
+        base = self.to_dict()
+        base.update({
+            "cooldown_started": self.cooldown_started.isoformat() if self.cooldown_started else None,
+            "cooldown_until": self.cooldown_until.isoformat() if self.cooldown_until else None,
+        })
+        return base
 
 
 class ProviderManagerInterface(ABC):
@@ -257,19 +350,19 @@ class ProviderManager(ProviderManagerInterface):
         """Get the local fallback node (Ollama)"""
         return self._fallback_node
     
-    def mark_node_failed(self, node_id: str, is_rate_limit: bool = False):
+    def mark_node_failed(self, node_id: str, is_rate_limit: bool = False, cooldown_minutes: int = 30):
         """Mark a node as failed due to error or rate limiting"""
         for node in self._nodes:
             if node.node_id == node_id or node.account_id == node_id:
-                node.record_error(is_rate_limit)
+                node.record_error(is_rate_limit, cooldown_minutes)
                 return
         logger.warning(f"Node not found: {node_id}")
     
-    def mark_node_success(self, node_id: str):
+    def mark_node_success(self, node_id: str, response_time: float = 0.0):
         """Record successful request for a node"""
         for node in self._nodes:
             if node.node_id == node_id or node.account_id == node_id:
-                node.record_success()
+                node.record_success(response_time)
                 return
     
     def _attempt_recovery(self):
@@ -277,21 +370,22 @@ class ProviderManager(ProviderManagerInterface):
         now = datetime.now()
         for node in self._nodes:
             if node.cooldown_until and now >= node.cooldown_until:
-                logger.info(f"Recovering node: {node.name}")
+                _add_log("INFO", f"Auto-recovering node: {node.name} after cooldown", node.name)
                 node.status = NodeStatus.DEGRADED  # Not fully healthy yet
                 node.cooldown_until = None
+                node.cooldown_started = None
     
     def reset_all_nodes(self):
         """Reset all nodes to healthy status"""
         for node in self._nodes:
             node.reset_status()
-        logger.info("All nodes reset to healthy status")
+        _add_log("INFO", "All nodes reset to healthy status")
     
     def set_strategy(self, strategy: str):
         """Change the selection strategy"""
         try:
             self._strategy = SelectionStrategy(strategy)
-            logger.info(f"Strategy changed to: {strategy}")
+            _add_log("INFO", f"Selection strategy changed to: {strategy}")
         except ValueError:
             raise ValueError(f"Invalid strategy: {strategy}. Use: {[s.value for s in SelectionStrategy]}")
     
@@ -304,6 +398,52 @@ class ProviderManager(ProviderManagerInterface):
             "has_fallback": self.has_fallback,
             "nodes": [n.to_dict() for n in self._nodes],
             "fallback": self._fallback_node.to_dict() if self._fallback_node else None
+        }
+    
+    def get_monitoring_stats(self) -> Dict[str, Any]:
+        """Get detailed monitoring statistics for dashboard"""
+        total_requests = sum(n.request_count for n in self._nodes)
+        total_errors = sum(n.error_count for n in self._nodes)
+        total_rate_limits = sum(n.rate_limit_count for n in self._nodes)
+        
+        fallback_stats = None
+        if self._fallback_node:
+            fallback_stats = self._fallback_node.to_monitoring_dict()
+        
+        nodes_by_status = {
+            "active": [],
+            "cooldown": [],
+            "offline": [],
+            "degraded": []
+        }
+        
+        for node in self._nodes:
+            node_data = node.to_monitoring_dict()
+            if node.status == NodeStatus.HEALTHY:
+                nodes_by_status["active"].append(node_data)
+            elif node.status == NodeStatus.RATE_LIMITED:
+                nodes_by_status["cooldown"].append(node_data)
+            elif node.status == NodeStatus.UNAVAILABLE:
+                nodes_by_status["offline"].append(node_data)
+            else:
+                nodes_by_status["degraded"].append(node_data)
+        
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "strategy": self._strategy.value,
+            "summary": {
+                "total_nodes": len(self._nodes),
+                "available_nodes": len(self.available_nodes),
+                "total_requests": total_requests,
+                "total_errors": total_errors,
+                "total_rate_limits": total_rate_limits,
+                "overall_success_rate": round((total_requests - total_errors) / max(total_requests, 1) * 100, 1),
+                "has_fallback": self.has_fallback
+            },
+            "nodes_by_status": nodes_by_status,
+            "all_nodes": [n.to_monitoring_dict() for n in self._nodes],
+            "fallback": fallback_stats,
+            "recent_logs": get_recent_logs(10)
         }
     
     def reload_config(self, config_path: Path):

@@ -25,6 +25,7 @@
 | **Distributed Inference** | Load balancing across multiple cloud inference nodes |
 | **Automatic Failover** | Intelligent retry with exponential backoff on errors |
 | **Local Fallback** | Seamless switch to local Ollama when cloud is exhausted |
+| **Monitoring Dashboard** | Real-time observability with node status, metrics, and live logs |
 | **Research Mode** | Academic-focused prompting for educational use |
 | **Streaming Responses** | Real-time chat experience with SSE |
 | **Access Control** | Token-based authentication |
@@ -123,6 +124,7 @@ cp .env.template .env
 2. **Configure `.env`**:
    ```env
    ACCESS_TOKEN=your_generated_token_here
+   ADMIN_PASSWORD=your_admin_password_here
    
    # Add your Cloudflare credentials
    CLOUDFLARE_ACCOUNT_1_ID=your_account_id
@@ -140,17 +142,45 @@ cp .env.template .env
    ollama serve
    ```
 
-### Running the Gateway
+### Running the Applications
 
+The system consists of two separate Streamlit applications:
+
+| Application | Purpose | Default Port |
+|-------------|---------|--------------|
+| Chat UI | User-facing chat interface | 8501 |
+| Admin Dashboard | System monitoring & health | 8502 |
+
+**Start the API Gateway:**
 ```bash
-# Start the API Gateway
 python api_gateway.py
+```
 
-# In another terminal, start the UI
+**Start the Chat UI (Port 8501):**
+```bash
 streamlit run streamlit_app.py
 ```
 
-Access the UI at `http://localhost:8501`
+**Start the Admin Dashboard (Port 8502):**
+```bash
+streamlit run admin_app.py --server.port 8502
+```
+
+**Run Both Apps Simultaneously (PowerShell):**
+```powershell
+Start-Process -NoNewWindow powershell -ArgumentList "streamlit run streamlit_app.py"
+Start-Process -NoNewWindow powershell -ArgumentList "streamlit run admin_app.py --server.port 8502"
+```
+
+**Run Both Apps Simultaneously (Bash):**
+```bash
+streamlit run streamlit_app.py &
+streamlit run admin_app.py --server.port 8502 &
+```
+
+Access:
+- Chat UI: `http://localhost:8501`
+- Admin Dashboard: `http://localhost:8502`
 
 ---
 
@@ -174,6 +204,9 @@ curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:8000/v1/status
 | `GET` | `/v1/status` | Detailed gateway status |
 | `POST` | `/v1/providers/strategy/{strategy}` | Change selection strategy |
 | `POST` | `/v1/providers/reset` | Reset all providers |
+| `GET` | `/v1/monitoring/stats` | Comprehensive monitoring statistics |
+| `GET` | `/v1/monitoring/logs` | Recent log entries |
+| `GET` | `/v1/monitoring/health` | Lightweight health for polling (public) |
 
 ### Inference Request
 
@@ -226,6 +259,64 @@ Enable via API:
 ```
 
 Or toggle in the Streamlit UI sidebar.
+
+---
+
+## Monitoring Dashboard
+
+The Admin Dashboard (`admin_app.py`) provides real-time observability into your inference gateway, separate from the chat interface to avoid disrupting the user experience.
+
+### Features
+
+- **Node Status**: Visual indicators showing Active (green), Cooldown (yellow), Offline (red)
+- **Request Metrics**: Total requests, success rates, and rate limit counts
+- **Request Distribution**: Bar chart showing load distribution across providers
+- **Live Logs**: Real-time streaming of gateway events (provider switching, errors, recoveries)
+- **Auto-refresh**: Dashboard updates every 10 seconds (only in admin app)
+- **Strategy Control**: Change load balancing strategy on-the-fly
+
+### Security
+
+The Admin Dashboard requires two-factor authentication:
+
+1. **ACCESS_TOKEN**: Same API token used for the chat app
+2. **ADMIN_PASSWORD**: Additional password configured in `.env`
+
+```env
+ADMIN_PASSWORD=your_secure_admin_password
+```
+
+If `ADMIN_PASSWORD` is not set, only the ACCESS_TOKEN is required.
+
+### Accessing the Dashboard
+
+1. Start the admin app: `streamlit run admin_app.py --server.port 8502`
+2. Open `http://localhost:8502`
+3. Enter your Access Token and Admin Password
+4. Click Login
+
+### Monitoring API
+
+```bash
+# Get comprehensive stats
+curl -H "Authorization: Bearer TOKEN" http://localhost:8000/v1/monitoring/stats
+
+# Get recent logs
+curl -H "Authorization: Bearer TOKEN" http://localhost:8000/v1/monitoring/logs?count=10
+
+# Lightweight health check (for polling)
+curl http://localhost:8000/v1/monitoring/health
+```
+
+### Cooldown Configuration
+
+When a provider returns HTTP 429 (rate limited), it enters cooldown:
+
+```env
+COOLDOWN_MINUTES=30  # Default: 30 minutes
+```
+
+Nodes automatically recover after the cooldown period expires.
 
 ---
 
@@ -330,9 +421,10 @@ Gateway logs include detailed request routing information:
 
 ```
 easyResearchAssistant/
-├── api_gateway.py         # FastAPI backend
+├── api_gateway.py         # FastAPI backend (port 8000)
 ├── provider_manager.py    # Distributed provider orchestration
-├── streamlit_app.py       # Chat UI
+├── streamlit_app.py       # Chat UI (port 8501)
+├── admin_app.py           # Admin monitoring dashboard (port 8502)
 ├── requirements.txt       # Dependencies
 ├── .env.template          # Configuration template
 ├── providers.example.json # Provider config template

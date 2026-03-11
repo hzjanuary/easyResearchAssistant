@@ -5,11 +5,7 @@ import requests
 import streamlit as st
 from typing import Generator
 
-# =============================================================================
-# Configuration
-# =============================================================================
-
-# API Configuration - defaults for local development
+# API Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 DEFAULT_ACCESS_TOKEN = os.getenv("ACCESS_TOKEN", "")
 
@@ -69,17 +65,6 @@ def check_api_health() -> dict:
         return {"status": "error", "message": str(e)}
 
 
-def get_gateway_status(token: str) -> dict:
-    try:
-        headers = {"Authorization": f"Bearer {token}"}
-        response = requests.get(f"{API_BASE_URL}/v1/status", headers=headers, timeout=5)
-        if response.status_code == 200:
-            return response.json()
-        return {"error": f"HTTP {response.status_code}"}
-    except Exception as e:
-        return {"error": str(e)}
-
-
 def stream_chat_response(
     prompt: str,
     token: str,
@@ -124,17 +109,14 @@ def stream_chat_response(
                         try:
                             parsed = json.loads(data)
                             
-                            # Handle info messages (provider switching)
                             if "info" in parsed:
                                 yield f"\n*{parsed['info']}*\n"
                                 continue
                             
-                            # Handle errors
                             if "error" in parsed:
                                 yield f"\n**Error:** {parsed['error']}"
                                 return
                             
-                            # Handle response content
                             if "response" in parsed:
                                 yield parsed["response"]
                             
@@ -215,21 +197,12 @@ def render_sidebar():
             with col1:
                 st.metric("Cloud Nodes", f"{providers.get('cloud_available', 0)}/{providers.get('cloud_total', 0)}")
             with col2:
-                fallback = "✓" if providers.get("local_fallback") else "✗"
+                fallback = "Yes" if providers.get("local_fallback") else "No"
                 st.metric("Local Fallback", fallback)
         else:
             st.session_state.api_connected = False
             st.markdown('<span class="status-offline">● Offline</span>', unsafe_allow_html=True)
             st.error(health.get("message", "Connection failed"))
-        
-        # Detailed status (if authenticated)
-        if st.session_state.access_token and st.session_state.api_connected:
-            with st.expander("Detailed Status"):
-                status = get_gateway_status(st.session_state.access_token)
-                if "error" not in status:
-                    st.json(status)
-                else:
-                    st.warning(f"Could not fetch: {status['error']}")
         
         st.divider()
         

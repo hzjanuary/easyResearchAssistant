@@ -3,11 +3,12 @@ import os
 import json
 import logging
 import secrets
+import time
 from typing import Optional, AsyncGenerator
 from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import FastAPI, HTTPException, Depends, Header, Security
+from fastapi import FastAPI, HTTPException, Depends, Header, Security, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +20,10 @@ from provider_manager import (
     InferenceNode,
     NodeType,
     SelectionStrategy,
-    create_provider_manager_from_env
+    create_provider_manager_from_env,
+    get_recent_logs,
+    clear_logs,
+    _add_log
 )
 
 # Load environment variables
@@ -44,6 +48,8 @@ class GatewayConfig:
     DEFAULT_MODEL: str = os.getenv("CLOUDFLARE_MODEL", "@cf/meta/llama-3-8b-instruct")
     MAX_RETRIES: int = int(os.getenv("MAX_RETRIES", "3"))
     REQUEST_TIMEOUT: int = int(os.getenv("REQUEST_TIMEOUT", "60"))
+    COOLDOWN_MINUTES: int = int(os.getenv("COOLDOWN_MINUTES", "30"))
+    
     # Local fallback
     OLLAMA_ENDPOINT: str = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
     OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3")
@@ -311,11 +317,10 @@ async def execute_inference_with_fallback(
         node = provider_manager.get_next_node()
         
         if not node:
-            logger.warning("No cloud providers available")
+            _add_log("WARNING", "No cloud providers available")
             break
         
         if node.node_id in tried_nodes:
-            # Cycle through - reset and continue or break
             provider_manager.reset_all_nodes()
             tried_nodes.clear()
             node = provider_manager.get_next_node()
@@ -323,7 +328,8 @@ async def execute_inference_with_fallback(
                 break
         
         tried_nodes.add(node.node_id)
-        logger.info(f"Attempt {attempt + 1}: Using {node.name}")
+        start_time = time.time()
+        _add_log("INFO", f"Attempt {attempt + 1}: Routing to {node.name}", node.name)
         
         error_encountered = False
         error_code = None
@@ -336,7 +342,8 @@ async def execute_inference_with_fallback(
                 error_encountered = True
                 break
             elif chunk == "__DONE__":
-                provider_manager.mark_node_success(node.node_id)
+                response_time = time.time() - start_time
+                provider_manager.mark_node_success(node.node_id, response_time)
                 yield "__DONE__"
                 return
             else:
@@ -347,8 +354,8 @@ async def execute_inference_with_fallback(
             is_server_error = 500 <= error_code < 600
             
             if is_rate_limit or is_server_error:
-                provider_manager.mark_node_failed(node.node_id, is_rate_limit)
-                logger.warning(f"Node {node.name} error {error_code}, trying next...")
+                provider_manager.mark_node_failed(node.node_id, is_rate_limit, config.COOLDOWN_MINUTES)
+                _add_log("WARNING", f"Switching from {node.name} (HTTP {error_code})", node.name)
                 
                 if stream:
                     yield json.dumps({
@@ -356,11 +363,12 @@ async def execute_inference_with_fallback(
                     })
                 continue
             else:
+                _add_log("ERROR", f"Provider error: HTTP {error_code}", node.name)
                 yield json.dumps({"error": f"Provider error: {error_code}"})
                 return
         else:
-            # Success without explicit DONE (non-streaming)
-            provider_manager.mark_node_success(node.node_id)
+            response_time = time.time() - start_time
+            provider_manager.mark_node_success(node.node_id, response_time)
             return
     
     # Phase 2: Local fallback
@@ -370,22 +378,27 @@ async def execute_inference_with_fallback(
             yield json.dumps({"error": "Fallback node not available"})
             return
         
-        logger.info(f"Cloud providers exhausted, using local fallback: {fallback.name}")
+        _add_log("INFO", f"Cloud exhausted, switching to local fallback: {fallback.name}", fallback.name)
         
         if stream:
             yield json.dumps({
                 "info": "Switching to local inference (may be slower)..."
             })
         
+        start_time = time.time()
         async for chunk in inference_client.call_node(
             fallback, prompt, system_prompt,
-            min(max_tokens, config.OLLAMA_MAX_TOKENS),  # Respect local limits
+            min(max_tokens, config.OLLAMA_MAX_TOKENS),
             temperature, stream
         ):
             if chunk.startswith("__ERROR__:"):
+                _add_log("ERROR", "Local fallback failed", fallback.name)
                 yield json.dumps({"error": "Local fallback also failed"})
                 return
             elif chunk == "__DONE__":
+                response_time = time.time() - start_time
+                fallback.record_success(response_time)
+                _add_log("INFO", f"Local fallback completed in {response_time:.2f}s", fallback.name)
                 yield "__DONE__"
                 return
             else:
@@ -393,6 +406,7 @@ async def execute_inference_with_fallback(
         return
     
     # Phase 3: All options exhausted
+    _add_log("ERROR", "All inference providers exhausted")
     yield json.dumps({"error": "All inference providers exhausted"})
 
 
@@ -542,6 +556,59 @@ async def reset_providers(_: bool = Depends(verify_access_token)):
     """Reset all providers to healthy status"""
     provider_manager.reset_all_nodes()
     return {"message": "All providers reset", "available": len(provider_manager.available_nodes)}
+
+
+# =============================================================================
+# Monitoring Endpoints
+# =============================================================================
+
+@app.get("/v1/monitoring/stats")
+async def get_monitoring_stats(_: bool = Depends(verify_access_token)):
+    """
+    Get comprehensive monitoring statistics for the dashboard.
+    Includes node status, request counts, error rates, and recent logs.
+    """
+    return provider_manager.get_monitoring_stats()
+
+
+@app.get("/v1/monitoring/logs")
+async def get_logs(
+    count: int = Query(default=10, ge=1, le=50),
+    _: bool = Depends(verify_access_token)
+):
+    """Get recent log entries for live monitoring"""
+    return {"logs": get_recent_logs(count)}
+
+
+@app.delete("/v1/monitoring/logs")
+async def clear_log_buffer(_: bool = Depends(verify_access_token)):
+    """Clear the log buffer"""
+    clear_logs()
+    return {"message": "Log buffer cleared"}
+
+
+@app.get("/v1/monitoring/health")
+async def monitoring_health():
+    """Lightweight health endpoint for dashboard polling (public)"""
+    if not provider_manager:
+        return {"status": "initializing"}
+    
+    active = len([n for n in provider_manager.all_nodes if n.is_available])
+    cooldown = len([n for n in provider_manager.all_nodes 
+                    if n.status.value == "rate_limited"])
+    offline = len([n for n in provider_manager.all_nodes 
+                   if n.status.value == "unavailable"])
+    
+    return {
+        "status": "healthy" if active > 0 else "degraded",
+        "nodes": {
+            "active": active,
+            "cooldown": cooldown,
+            "offline": offline,
+            "total": len(provider_manager.all_nodes)
+        },
+        "fallback_available": provider_manager.has_fallback
+    }
 
 
 if __name__ == "__main__":

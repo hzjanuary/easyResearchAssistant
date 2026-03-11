@@ -25,8 +25,8 @@
 | **Distributed Inference** | Load balancing across multiple cloud inference nodes |
 | **Automatic Failover** | Intelligent retry with exponential backoff on errors |
 | **Local Fallback** | Seamless switch to local Ollama when cloud is exhausted |
+| **Research Mode (RAG)** | Real-time web search with DuckDuckGo for up-to-date information |
 | **Monitoring Dashboard** | Real-time observability with node status, metrics, and live logs |
-| **Research Mode** | Academic-focused prompting for educational use |
 | **Streaming Responses** | Real-time chat experience with SSE |
 | **Access Control** | Token-based authentication |
 
@@ -47,6 +47,12 @@
 │  │   Auth      │  │  Request Router │  │  Streaming Handler      │  │
 │  │   Layer     │  │  & Retry Logic  │  │  (SSE)                  │  │
 │  └─────────────┘  └─────────────────┘  └─────────────────────────┘  │
+│                           │                                         │
+│                           ▼                                         │
+│              ┌─────────────────────────┐                            │
+│              │  RAG Search Tool        │ ◄── Research Mode          │
+│              │  (DuckDuckGo)           │                            │
+│              └─────────────────────────┘                            │
 └──────────────────────────────┬──────────────────────────────────────┘
                                │
                                ▼
@@ -73,7 +79,7 @@
            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                    Local Fallback (Ollama)                          │
-│                 RTX 3050 • Llama 3 • Low-VRAM Mode                  │
+│                 RTX 3050 • Llama 3.1 • Low-VRAM Mode                │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -123,6 +129,7 @@ cp .env.template .env
 
 2. **Configure `.env`**:
    ```env
+   # Security
    ACCESS_TOKEN=your_generated_token_here
    ADMIN_PASSWORD=your_admin_password_here
    
@@ -130,26 +137,62 @@ cp .env.template .env
    CLOUDFLARE_ACCOUNT_1_ID=your_account_id
    CLOUDFLARE_ACCOUNT_1_TOKEN=your_api_token
    CLOUDFLARE_ACCOUNT_1_NAME=Provider-Alpha
+   CLOUDFLARE_MODEL=@cf/meta/llama-3.1-8b-instruct
    
    # Enable local fallback (optional)
    OLLAMA_ENABLED=true
-   OLLAMA_MODEL=llama3
+   OLLAMA_MODEL=llama3.1
+   
+   # For Docker: automatically configured via docker-compose.yml
+   # BACKEND_URL=http://backend:8000
+   # LOG_FILE=/app/logs/system.log
    ```
 
 3. **Start Local Fallback** (optional):
    ```bash
-   ollama pull llama3
+   ollama pull llama3.1
    ollama serve
    ```
 
 ### Running the Applications
 
-The system consists of two separate Streamlit applications:
+The system consists of three components:
 
-| Application | Purpose | Default Port |
-|-------------|---------|--------------|
+| Component | Purpose | Default Port |
+|-----------|---------|--------------|
+| API Gateway | FastAPI backend | 8000 |
 | Chat UI | User-facing chat interface | 8501 |
 | Admin Dashboard | System monitoring & health | 8502 |
+
+#### Option 1: Docker (Recommended)
+
+```bash
+# Build and start all services
+docker-compose up --build
+
+# Or run in background
+docker-compose up -d --build
+```
+
+Access:
+- Chat UI: `http://localhost:8501`
+- Admin Dashboard: `http://localhost:8502`
+- API Gateway: `http://localhost:8000`
+
+> **Note for Windows/Mac**: Ollama running on host is accessible via `host.docker.internal:11434`
+
+#### Docker Volume for Logs
+
+The `docker-compose.yml` creates a shared volume `app_logs` for centralized logging:
+- Backend writes logs to `/app/logs/system.log`
+- Admin UI reads logs from the same volume (read-only)
+
+To view logs from Docker:
+```bash
+docker-compose logs -f backend
+```
+
+#### Option 2: Local Development
 
 **Start the API Gateway:**
 ```bash
@@ -243,22 +286,50 @@ data: [DONE]
 
 ---
 
-## Research Mode
+## Research Mode (RAG)
 
-Research Mode activates an academic-focused system prompt optimized for:
+Research Mode enables **Retrieval-Augmented Generation (RAG)** - the system performs real-time web searches before generating responses, ensuring up-to-date information.
 
-- **Structured Explanations**: Clear, organized responses
-- **Educational Value**: Learning-oriented language
-- **Concept Citations**: References to relevant theories
-- **Illustrative Examples**: Practical demonstrations
-- **Further Exploration**: Suggestions for related topics
+### How It Works
 
-Enable via API:
-```json
-{"prompt": "...", "research_mode": true}
+```
+┌─────────────┐    ┌──────────────────┐    ┌─────────────────┐    ┌─────────────┐
+│ User Query  │───▶│ DuckDuckGo Search│───▶│ Augmented Prompt│───▶│ LLM Response│
+└─────────────┘    └──────────────────┘    └─────────────────┘    └─────────────┘
+                          │                        │
+                          ▼                        ▼
+                   [Search Results]    [System Prompt + Results + Query]
 ```
 
-Or toggle in the Streamlit UI sidebar.
+### Features
+
+- **Real-Time Web Search**: Queries DuckDuckGo for current information
+- **Source Citations**: Results include titles, snippets, and URLs
+- **Intelligent Augmentation**: Search results are injected into the system prompt
+- **Graceful Fallback**: If search fails, uses base LLM knowledge
+
+### Example
+
+Query: *"Who is the current President of Vietnam?"*
+
+1. System searches DuckDuckGo for latest information
+2. Search results are formatted and added to the prompt
+3. LLM generates response using real-time data (2026)
+
+### Enable via API:
+```json
+{"prompt": "Who won the 2026 World Cup?", "research_mode": true}
+```
+
+### Enable via UI:
+Toggle "Enable Research Mode" in the Streamlit sidebar. A 🔍 badge will appear indicating RAG is active.
+
+### Configuration
+
+```env
+# .env
+RAG_MAX_RESULTS=3  # Number of search results to fetch
+```
 
 ---
 
@@ -272,6 +343,7 @@ The Admin Dashboard (`admin_app.py`) provides real-time observability into your 
 - **Request Metrics**: Total requests, success rates, and rate limit counts
 - **Request Distribution**: Bar chart showing load distribution across providers
 - **Live Logs**: Real-time streaming of gateway events (provider switching, errors, recoveries)
+- **Live System Logs (File)**: Persistent log viewer reading from `system.log` file
 - **Auto-refresh**: Dashboard updates every 10 seconds (only in admin app)
 - **Strategy Control**: Change load balancing strategy on-the-fly
 
@@ -325,9 +397,18 @@ Nodes automatically recover after the cooldown period expires.
 ### Environment Variables (Recommended)
 
 ```env
+# Cloud providers
 CLOUDFLARE_ACCOUNT_1_ID=abc123...
 CLOUDFLARE_ACCOUNT_1_TOKEN=xyz789...
 CLOUDFLARE_ACCOUNT_1_NAME=Provider-Alpha
+CLOUDFLARE_MODEL=@cf/meta/llama-3.1-8b-instruct
+
+# Networking (Docker sets these automatically)
+BACKEND_URL=http://backend:8000  # Service name in Docker
+LOG_FILE=/app/logs/system.log    # Shared volume path
+
+# Local fallback
+OLLAMA_ENDPOINT=http://host.docker.internal:11434  # Docker on Windows/Mac
 ```
 
 ### JSON Configuration (Alternative)
@@ -350,8 +431,8 @@ For high availability, configure Ollama as a local fallback:
 # Linux
 curl -fsSL https://ollama.ai/install.sh | sh
 
-# Pull Llama 3 (optimized for RTX 3050 4GB)
-ollama pull llama3
+# Pull Llama 3.1 (recommended for better accuracy)
+ollama pull llama3.1
 ```
 
 ### Lightweight Configuration
@@ -406,12 +487,24 @@ The gateway automatically configures Ollama for constrained environments:
 
 ### Logs
 
-Gateway logs include detailed request routing information:
+The system uses centralized logging with both file and console output:
+
+**Log File Location:**
+- Local: `./system.log`
+- Docker: `/app/logs/system.log` (shared volume between backend and admin-ui)
+
+**Log Format:**
 ```
-2026-03-10 14:30:00 | INFO | api_gateway | Attempt 1: Using Provider-Alpha
-2026-03-10 14:30:01 | WARNING | api_gateway | Node Provider-Alpha error 429, trying next...
-2026-03-10 14:30:01 | INFO | api_gateway | Attempt 2: Using Provider-Beta
+2026-03-11 14:30:00 | INFO | api_gateway | Attempt 1: Using Provider-Alpha
+2026-03-11 14:30:01 | WARNING | provider_manager | Node Provider-Alpha rate limited (429), cooldown: 30min
+2026-03-11 14:30:01 | INFO | api_gateway | Attempt 2: Using Provider-Beta
+2026-03-11 14:30:05 | INFO | provider_manager | Falling back to local Ollama
 ```
+
+**View Logs:**
+- Admin Dashboard: Expand "📋 Live System Logs (File)" section
+- Docker: `docker-compose logs -f backend`
+- Local: `tail -f system.log`
 
 ---
 
@@ -423,11 +516,15 @@ Gateway logs include detailed request routing information:
 easyResearchAssistant/
 ├── api_gateway.py         # FastAPI backend (port 8000)
 ├── provider_manager.py    # Distributed provider orchestration
+├── search_tool.py         # RAG web search utility (DuckDuckGo)
 ├── streamlit_app.py       # Chat UI (port 8501)
 ├── admin_app.py           # Admin monitoring dashboard (port 8502)
-├── requirements.txt       # Dependencies
+├── docker-compose.yml     # Docker multi-service configuration
+├── Dockerfile             # Container image definition
+├── requirements.txt       # Python dependencies
 ├── .env.template          # Configuration template
-├── providers.example.json # Provider config template
+├── providers.example.json # Provider config template (alternative)
+├── system.log             # Centralized log file (auto-generated)
 └── README.md              # This file
 ```
 

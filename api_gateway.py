@@ -26,15 +26,46 @@ from provider_manager import (
     _add_log
 )
 
+from search_tool import async_get_web_search, build_research_prompt
+
 # Load environment variables
 load_dotenv()
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
+# Configure centralized logging with FileHandler and StreamHandler
+LOG_FORMAT = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+LOG_FILE = os.getenv("LOG_FILE", "system.log")
+
+def setup_logging():
+    """Configure centralized logging for the entire application."""
+    # Create root logger for the application
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    
+    # Clear any existing handlers
+    root_logger.handlers.clear()
+    
+    # Create formatter
+    formatter = logging.Formatter(LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S")
+    
+    # StreamHandler for console/Docker output
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.INFO)
+    stream_handler.setFormatter(formatter)
+    root_logger.addHandler(stream_handler)
+    
+    # FileHandler for persistent logging to system.log
+    try:
+        file_handler = logging.FileHandler(LOG_FILE, mode='a', encoding='utf-8')
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
+    except Exception as e:
+        root_logger.warning(f"Could not create file handler for {LOG_FILE}: {e}")
+    
+    return root_logger
+
+# Initialize logging
+setup_logging()
 logger = logging.getLogger("api_gateway")
 
 
@@ -458,16 +489,34 @@ async def inference(
     
     Accepts prompts and returns AI-generated responses with automatic
     provider failover and local fallback for high availability.
+    
+    When research_mode is enabled, performs real-time web search (RAG)
+    to provide up-to-date information.
     """
     system_prompt = request.system_prompt
     
-    # Apply research mode if enabled
+    # Apply research mode with RAG (web search) if enabled
     if request.research_mode:
-        research_prefix = config.RESEARCH_SYSTEM_PROMPT
-        if system_prompt:
-            system_prompt = f"{research_prefix}\n\n{system_prompt}"
+        logger.info(f"Research mode enabled - performing web search for: {request.prompt[:50]}...")
+        _add_log("INFO", f"Research Mode: Searching web for '{request.prompt[:40]}...'")
+        
+        # Perform web search
+        search_results = await async_get_web_search(request.prompt, max_results=3)
+        
+        if search_results:
+            logger.info("Web search completed successfully")
+            _add_log("INFO", "Web search completed - augmenting prompt with results")
         else:
-            system_prompt = research_prefix
+            logger.warning("Web search returned no results")
+            _add_log("WARNING", "Web search returned no results - using base knowledge")
+        
+        # Build research prompt with search results
+        research_system_prompt = build_research_prompt(request.prompt, search_results)
+        
+        if system_prompt:
+            system_prompt = f"{research_system_prompt}\n\nAdditional Context: {system_prompt}"
+        else:
+            system_prompt = research_system_prompt
     
     logger.info(f"Inference request: {request.prompt[:50]}... (research_mode={request.research_mode})")
     

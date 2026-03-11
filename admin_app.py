@@ -14,9 +14,10 @@ except ImportError:
     AUTOREFRESH_AVAILABLE = False
 
 # API Configuration
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+API_BASE_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 DEFAULT_ACCESS_TOKEN = os.getenv("ACCESS_TOKEN", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+SYSTEM_LOG_FILE = os.getenv("LOG_FILE", "system.log")
 
 st.set_page_config(
     page_title="Admin Dashboard - easyResearchAssistant",
@@ -152,6 +153,24 @@ def get_status_badge(status: str) -> str:
         return '<span class="status-offline-badge">Offline</span>'
     else:
         return f'<span class="status-degraded">{status}</span>'
+
+
+def read_system_logs(num_lines: int = 100) -> List[str]:
+    """
+    Read the last N lines from the system.log file.
+    Returns a list of log lines, newest first.
+    """
+    try:
+        if not os.path.exists(SYSTEM_LOG_FILE):
+            return []
+        
+        with open(SYSTEM_LOG_FILE, 'r', encoding='utf-8') as f:
+            # Read all lines and get the last num_lines
+            lines = f.readlines()
+            # Return the last num_lines, reversed to show newest first
+            return [line.strip() for line in lines[-num_lines:] if line.strip()]
+    except Exception as e:
+        return [f"Error reading log file: {str(e)}"]
 
 
 def render_login():
@@ -481,6 +500,34 @@ def render_dashboard():
                 )
     else:
         st.info("No logs yet. Logs will appear as requests are processed.")
+    
+    # Live System Logs from file (persistent logs)
+    st.divider()
+    with st.expander("📋 Live System Logs (File)", expanded=False):
+        st.caption(f"Reading from: {SYSTEM_LOG_FILE}")
+        
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            if st.button("🔄 Refresh Logs", key="refresh_file_logs"):
+                st.rerun()
+        with col2:
+            num_lines = st.selectbox(
+                "Lines to show",
+                options=[50, 100, 200],
+                index=1,
+                key="log_lines_select"
+            )
+        
+        file_logs = read_system_logs(num_lines)
+        
+        if file_logs:
+            # Show logs in a code block with monospace font
+            log_text = "\n".join(reversed(file_logs))  # Newest first
+            st.code(log_text, language="log")
+            
+            st.caption(f"Showing last {len(file_logs)} lines")
+        else:
+            st.info(f"No logs found in {SYSTEM_LOG_FILE}. Logs will appear as the system processes requests.")
     
     # Footer
     st.divider()

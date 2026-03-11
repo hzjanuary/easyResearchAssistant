@@ -12,7 +12,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from collections import deque
 
-logger = logging.getLogger(__name__)
+# Use named logger that inherits from root logger configured in api_gateway
+logger = logging.getLogger("provider_manager")
 
 # In-memory log buffer for monitoring dashboard
 LOG_BUFFER_SIZE = 50

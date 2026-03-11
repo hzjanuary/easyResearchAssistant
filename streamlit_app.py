@@ -6,7 +6,7 @@ import streamlit as st
 from typing import Generator
 
 # API Configuration
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+API_BASE_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 DEFAULT_ACCESS_TOKEN = os.getenv("ACCESS_TOKEN", "")
 
 st.set_page_config(
@@ -118,7 +118,9 @@ def stream_chat_response(
                                 return
                             
                             if "response" in parsed:
-                                yield parsed["response"]
+                                response_text = parsed["response"]
+                                if response_text:
+                                    yield response_text
                             
                         except json.JSONDecodeError:
                             yield data
@@ -151,14 +153,14 @@ def render_sidebar():
         research_mode = st.toggle(
             "Enable Research Mode",
             value=st.session_state.research_mode,
-            help="Optimized for academic summarization and educational explanations"
+            help="Searches the web in real-time for up-to-date information (RAG)"
         )
         st.session_state.research_mode = research_mode
         
         if research_mode:
             st.info(
-                "Research Mode active: Responses will focus on "
-                "academic clarity, structured explanations, and educational value."
+                "🔍 **Research Mode active**: The assistant will search the web "
+                "for real-time information before responding, ensuring up-to-date answers."
             )
         
         st.divider()
@@ -228,7 +230,7 @@ def render_chat():
     with col2:
         if st.session_state.research_mode:
             st.markdown(
-                '<span class="research-badge">Research Mode</span>',
+                '<span class="research-badge">🔍 Research Mode (RAG)</span>',
                 unsafe_allow_html=True
             )
     
@@ -258,15 +260,36 @@ def render_chat():
             response_placeholder = st.empty()
             full_response = ""
             
-            for chunk in stream_chat_response(
-                prompt=prompt,
-                token=st.session_state.access_token,
-                research_mode=st.session_state.research_mode,
-                temperature=st.session_state.temperature,
-                max_tokens=st.session_state.max_tokens
-            ):
-                full_response += chunk
-                response_placeholder.markdown(full_response + "▌")
+            # Show search status if research mode is enabled
+            if st.session_state.research_mode:
+                with st.status("🔍 Searching the web for latest info...", expanded=False) as search_status:
+                    st.write("Querying DuckDuckGo for real-time information...")
+                    
+                    # Start streaming - the search happens on backend
+                    for chunk in stream_chat_response(
+                        prompt=prompt,
+                        token=st.session_state.access_token,
+                        research_mode=st.session_state.research_mode,
+                        temperature=st.session_state.temperature,
+                        max_tokens=st.session_state.max_tokens
+                    ):
+                        if chunk is not None:
+                            # Update status once we start getting response
+                            if not full_response:
+                                search_status.update(label="✅ Search complete - generating response...", state="complete")
+                            full_response += chunk
+                            response_placeholder.markdown(full_response + "▌")
+            else:
+                for chunk in stream_chat_response(
+                    prompt=prompt,
+                    token=st.session_state.access_token,
+                    research_mode=st.session_state.research_mode,
+                    temperature=st.session_state.temperature,
+                    max_tokens=st.session_state.max_tokens
+                ):
+                    if chunk is not None:
+                        full_response += chunk
+                        response_placeholder.markdown(full_response + "▌")
             
             response_placeholder.markdown(full_response)
         
